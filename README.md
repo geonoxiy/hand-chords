@@ -13,7 +13,7 @@ It runs entirely in the browser: the camera image never leaves your device.
 - **Hold, Pulse or Arpeggio**: Hold keeps a chord at a steady volume for as long as your hand is up.
 - **Rich chords**: triads, 6ths, 7ths, add9, major/minor/dominant 9ths, 6/9, minor 11ths and 13ths. Switch the whole chart between Triads, 7ths and 9ths, or pick any chord for any pattern, in any key.
 - **Playable keyboard**: click, tap, drag, or type on your computer keyboard (A W S E D F T G Y H U J K O L P ;).
-- **Recording**: record everything you play, play takes back, and save them as WAV.
+- **Recording**: film yourself playing — the camera with the hand tracer, the app's sound and your microphone — and save it as MP4 (WebM in Firefox, which can't make MP4).
 - **Light and dark mode.**
 
 ## Finger patterns (default, key of C)

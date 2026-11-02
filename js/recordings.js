@@ -1,116 +1,174 @@
-// Recording: captures everything you hear (both hands and the keyboard) as
-// takes you can play back, save as WAV, or delete. Takes live in this tab
-// until saved, so leaving with unsaved takes asks first.
-/* global Tone */
+// Recording: captures a video of your performance — the mirrored camera with
+// the hand tracer on top — with everything you hear and, if switched on, your
+// microphone. Saved as MP4 where the browser can make it (Chrome, Edge,
+// Safari); Firefox only makes WebM. Without a camera, takes are sound only.
+// Takes live in this tab until saved, so leaving with unsaved takes asks first.
+
+const VIDEO_TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+const AUDIO_TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+const MIC_KEY = 'hand-chords-mic';
 
 const ICONS = {
   play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>',
-  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.8 10.2A2 2 0 0 1 15.2 21H8.8a2 2 0 0 1-2-1.8L6 9Z"/></svg>',
 };
 
 const formatTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+const firstSupported = (types) => types.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
+const extension = (type) => (type.startsWith('video/mp4') ? 'mp4' : type.startsWith('audio/mp4') ? 'm4a' : 'webm');
 
-export function setUpRecordings({ player, startSound, button, label, list, empty, setStatus }) {
+// A small still of the last frame, for the takes list.
+function thumbnail(canvas) {
+  const small = document.createElement('canvas');
+  small.width = 160;
+  small.height = Math.round((160 * canvas.height) / canvas.width);
+  small.getContext('2d').drawImage(canvas, 0, 0, small.width, small.height);
+  return small.toDataURL('image/jpeg', 0.7);
+}
+
+// getVideo() starts the camera if needed and resolves to { stream, canvas }
+// for the camera-with-tracer picture, or null when there's no camera.
+export function setUpRecordings({ player, startSound, getVideo, stopVideo, button, label, micButton, list, empty, preview, setStatus }) {
   const takes = [];
-  const audio = new Audio();
-  let playing = null; // the take being played back
-  let startedAt = 0;
-  let ticker = null;
+  let session = null; // the recording in progress
   let count = 0;
+  let micOn = true;
+  try {
+    micOn = localStorage.getItem(MIC_KEY) !== 'off';
+  } catch {
+    // Storage unavailable: the mic starts on.
+  }
 
-  const recording = () => player.recorder?.state === 'started';
+  function showMic() {
+    micButton.setAttribute('aria-pressed', String(micOn));
+    micButton.setAttribute('aria-label', micOn ? 'Microphone on for recordings' : 'Microphone off for recordings');
+  }
 
   async function start() {
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus('This browser can’t record.');
+      return;
+    }
     button.disabled = true;
+    micButton.disabled = true;
+    const soundReady = startSound(); // first, while still inside the click
+    let video = null;
+    let mic = null;
+    let note = '';
     try {
-      await startSound(); // first, while still inside the click
-    } catch {
+      [video] = await Promise.all([getVideo(), soundReady]);
+      if (micOn) {
+        try {
+          mic = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false },
+          });
+        } catch (err) {
+          console.error(err);
+          note = ' — without the mic (access was blocked)';
+        }
+      }
+    } catch (err) {
+      console.error(err);
       button.disabled = false;
+      micButton.disabled = false;
       return;
     }
+
+    const removeMic = mic && player.addToRecording(mic);
+    const tracks = [...(video?.stream.getVideoTracks() ?? []), ...player.recordingOutput.stream.getAudioTracks()];
+    const recorder = new MediaRecorder(new MediaStream(tracks), {
+      mimeType: firstSupported(video ? VIDEO_TYPES : AUDIO_TYPES),
+      videoBitsPerSecond: 5_000_000,
+      audioBitsPerSecond: 192_000,
+    });
+    const chunks = [];
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size) chunks.push(event.data);
+    });
+    recorder.start(1000);
+
+    const startedAt = performance.now();
+    const tick = () => (label.textContent = formatTime((performance.now() - startedAt) / 1000));
+    session = { recorder, chunks, startedAt, ticker: setInterval(tick, 250), video, mic, removeMic };
+    tick();
     button.disabled = false;
-    if (!player.recorder) {
-      setStatus('This browser can’t record audio.');
-      return;
-    }
-    player.recorder.start();
-    startedAt = performance.now();
     button.classList.add('recording');
     button.setAttribute('aria-pressed', 'true');
-    const tick = () => (label.textContent = formatTime((performance.now() - startedAt) / 1000));
-    tick();
-    ticker = setInterval(tick, 250);
-    setStatus('Recording…');
+    setStatus(`Recording ${video ? 'video' : 'sound only (no camera)'}${note}…`);
   }
 
   async function stop() {
+    const { recorder, chunks, startedAt, ticker, video, mic, removeMic } = session;
+    session = null;
     clearInterval(ticker);
-    const duration = (performance.now() - startedAt) / 1000;
     button.classList.remove('recording');
     button.setAttribute('aria-pressed', 'false');
     label.textContent = 'Record';
-    const blob = await player.recorder.stop();
+    micButton.disabled = false;
+
+    const thumb = video ? thumbnail(video.canvas) : null;
+    const stopped = new Promise((resolve) => recorder.addEventListener('stop', resolve, { once: true }));
+    recorder.stop();
+    await stopped;
+    removeMic?.();
+    mic?.getTracks().forEach((track) => track.stop());
+    video?.stream.getTracks().forEach((track) => track.stop());
+    stopVideo();
+
+    const blob = new Blob(chunks, { type: recorder.mimeType });
+    const duration = (performance.now() - startedAt) / 1000;
     count += 1;
-    takes.unshift({ name: `Take ${count}`, blob, url: URL.createObjectURL(blob), duration, saved: false });
+    takes.unshift({ name: `Take ${count}`, blob, url: URL.createObjectURL(blob), duration, thumb, saved: false });
     render();
     setStatus(`Take ${count} recorded — ${formatTime(duration)}`);
   }
 
-  function togglePlayback(take) {
-    if (playing === take && !audio.paused) {
-      audio.pause();
-    } else {
-      if (playing !== take) audio.src = take.url;
-      playing = take;
-      audio.play();
-    }
-    render();
-  }
-
-  async function save(take) {
-    setStatus(`Saving ${take.name}…`);
-    try {
-      const decoded = await Tone.getContext().decodeAudioData(await take.blob.arrayBuffer());
-      download(encodeWav(decoded), `hand-chords-${take.name.toLowerCase().replace(/\s+/g, '-')}.wav`);
-      take.saved = true;
-      setStatus(`${take.name} saved as WAV`);
-    } catch (err) {
-      console.error(err);
-      setStatus(`Couldn’t save ${take.name}.`);
-    }
+  function save(take) {
+    const link = Object.assign(document.createElement('a'), {
+      href: take.url,
+      download: `hand-chords-${take.name.toLowerCase().replace(/\s+/g, '-')}.${extension(take.blob.type)}`,
+    });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    take.saved = true;
+    setStatus(`${take.name} saved`);
   }
 
   function remove(take) {
     if (!take.saved && !confirm(`Delete ${take.name}? It hasn’t been saved.`)) return;
-    if (playing === take) {
-      audio.pause();
-      playing = null;
-    }
     URL.revokeObjectURL(take.url);
     takes.splice(takes.indexOf(take), 1);
     render();
+  }
+
+  function openPreview(take) {
+    preview.title.textContent = take.name;
+    preview.video.src = take.url;
+    preview.save.onclick = () => save(take);
+    preview.dialog.showModal();
+    preview.video.play();
   }
 
   function render() {
     empty.hidden = takes.length > 0;
     list.replaceChildren(
       ...takes.map((take) => {
-        const isPlaying = playing === take && !audio.paused;
         const row = document.createElement('li');
         row.className = 'take';
         row.innerHTML = `
-          <button class="play-button" type="button" aria-label="${isPlaying ? 'Pause' : 'Play'} ${take.name}">
-            ${isPlaying ? ICONS.pause : ICONS.play}
+          <button class="take-thumb" type="button" aria-label="Play ${take.name}">
+            ${take.thumb ? `<img src="${take.thumb}" alt="">` : ''}
+            <span class="take-play">${ICONS.play}</span>
           </button>
           <div class="take-text">
             <span class="take-name">${take.name}</span>
-            <span class="take-time">${formatTime(take.duration)}</span>
+            <span class="take-time">${formatTime(take.duration)} · ${take.thumb ? 'Video' : 'Sound only'}</span>
           </div>
-          <button class="text-button" type="button">Save WAV</button>
+          <button class="text-button" type="button">Save ${extension(take.blob.type).toUpperCase()}</button>
           <button class="delete-button" type="button" aria-label="Delete ${take.name}">${ICONS.trash}</button>`;
         const [play, saveButton, deleteButton] = row.querySelectorAll('button');
-        play.addEventListener('click', () => togglePlayback(take));
+        play.addEventListener('click', () => openPreview(take));
         saveButton.addEventListener('click', () => save(take));
         deleteButton.addEventListener('click', () => remove(take));
         return row;
@@ -118,55 +176,24 @@ export function setUpRecordings({ player, startSound, button, label, list, empty
     );
   }
 
-  button.addEventListener('click', () => (recording() ? stop() : start()));
-  audio.addEventListener('pause', render);
-  audio.addEventListener('ended', render);
-  window.addEventListener('beforeunload', (event) => {
-    if (takes.some((take) => !take.saved) || recording()) event.preventDefault();
-  });
-  render();
-}
-
-function download(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const link = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-
-// 16-bit PCM WAV, which every audio app opens.
-function encodeWav(audioBuffer) {
-  const channels = audioBuffer.numberOfChannels;
-  const rate = audioBuffer.sampleRate;
-  const frames = audioBuffer.length;
-  const dataBytes = frames * channels * 2;
-  const view = new DataView(new ArrayBuffer(44 + dataBytes));
-  const text = (offset, value) => [...value].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
-
-  text(0, 'RIFF');
-  view.setUint32(4, 36 + dataBytes, true);
-  text(8, 'WAVE');
-  text(12, 'fmt ');
-  view.setUint32(16, 16, true); // format chunk size
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, channels, true);
-  view.setUint32(24, rate, true);
-  view.setUint32(28, rate * channels * 2, true); // bytes per second
-  view.setUint16(32, channels * 2, true); // bytes per frame
-  view.setUint16(34, 16, true); // bits per sample
-  text(36, 'data');
-  view.setUint32(40, dataBytes, true);
-
-  const data = Array.from({ length: channels }, (_, c) => audioBuffer.getChannelData(c));
-  let offset = 44;
-  for (let i = 0; i < frames; i++) {
-    for (let c = 0; c < channels; c++) {
-      const sample = Math.max(-1, Math.min(1, data[c][i]));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-      offset += 2;
+  button.addEventListener('click', () => (session ? stop() : start()));
+  micButton.addEventListener('click', () => {
+    micOn = !micOn;
+    try {
+      localStorage.setItem(MIC_KEY, micOn ? 'on' : 'off');
+    } catch {
+      // Not remembered, but still applies to the next take.
     }
-  }
-  return new Blob([view], { type: 'audio/wav' });
+    showMic();
+  });
+  preview.close.addEventListener('click', () => preview.dialog.close());
+  preview.dialog.addEventListener('close', () => {
+    preview.video.pause();
+    preview.video.removeAttribute('src');
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (session || takes.some((take) => !take.saved)) event.preventDefault();
+  });
+  showMic();
+  render();
 }

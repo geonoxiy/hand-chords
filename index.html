@@ -34,6 +34,13 @@
           <span class="record-dot" aria-hidden="true"></span>
           <span id="record-label">Record</span>
         </button>
+        <button class="round-button mic-button" id="mic" type="button" aria-pressed="true" aria-label="Microphone on for recordings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path class="mic-stand" d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+            <path class="mic-slash" d="M4.5 3.5l15 17" />
+          </svg>
+        </button>
         <button class="round-button" id="theme" type="button" aria-label="Switch to dark mode">
           <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="4.2" />
@@ -108,8 +115,12 @@
         <h2 class="section-title" id="recordings-title">Recordings</h2>
         <div class="card list">
           <ul class="takes" id="takes"></ul>
-          <p class="empty" id="takes-empty">Press Record to capture everything you play.</p>
+          <p class="empty" id="takes-empty">Press Record to film yourself playing.</p>
         </div>
+        <p class="footnote">
+          Records the camera with the hand tracer, the app’s sound and your mic (switch it with the mic button).
+          Wear headphones so the mic doesn’t pick up the speakers.
+        </p>
       </section>
 
       <section class="settings" aria-labelledby="settings-title">
@@ -141,5 +152,14 @@
         <p class="footnote" id="style-help"></p>
       </section>
     </main>
+
+    <dialog class="preview" id="preview" aria-labelledby="preview-title">
+      <video id="preview-video" controls playsinline></video>
+      <div class="preview-bar">
+        <strong id="preview-title"></strong>
+        <button class="text-button" id="preview-save" type="button">Save</button>
+        <button class="text-button strong" id="preview-close" type="button">Done</button>
+      </div>
+    </dialog>
   </body>
 </html>

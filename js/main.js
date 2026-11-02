@@ -37,7 +37,13 @@ const els = {
   status: $('#status'),
   record: $('#record'),
   recordLabel: $('#record-label'),
+  mic: $('#mic'),
   theme: $('#theme'),
+  preview: $('#preview'),
+  previewVideo: $('#preview-video'),
+  previewTitle: $('#preview-title'),
+  previewSave: $('#preview-save'),
+  previewClose: $('#preview-close'),
   stage: $('#stage'),
   video: $('#video'),
   canvas: $('#overlay'),
@@ -483,8 +489,38 @@ function onFrame() {
     const after = SIDES.map((side) => `${hands[side].pattern}|${hands[side].playing}`).join();
     if (before !== after) refreshHighlights();
     drawOverlay(found);
+    if (recordingVideo) drawRecordingFrame();
   }
   requestAnimationFrame(onFrame);
+}
+
+// ---------- video for recordings ----------
+
+// What a video recording shows: the mirrored camera with the hand tracer on top.
+const frameCanvas = document.createElement('canvas');
+const frameCtx = frameCanvas.getContext('2d');
+let recordingVideo = false;
+
+function drawRecordingFrame() {
+  const { width, height } = frameCanvas;
+  frameCtx.save();
+  frameCtx.translate(width, 0);
+  frameCtx.scale(-1, 1);
+  frameCtx.drawImage(els.video, 0, 0, width, height);
+  frameCtx.restore();
+  frameCtx.drawImage(els.canvas, 0, 0, width, height);
+}
+
+// Starts the camera if needed. Resolves to the picture to record, or null
+// when there's no camera.
+async function videoForRecording() {
+  if (!(await startTrackingOnce())) return null;
+  const scale = Math.min(1, 1280 / els.video.videoWidth);
+  frameCanvas.width = Math.round(els.video.videoWidth * scale);
+  frameCanvas.height = Math.round(els.video.videoHeight * scale);
+  drawRecordingFrame();
+  recordingVideo = true;
+  return { stream: frameCanvas.captureStream(30), canvas: frameCanvas };
 }
 
 // ---------- start-up ----------
@@ -514,8 +550,18 @@ function describeError(err) {
 }
 
 let landmarkerLoading = null;
+let tracking = null; // resolves to true once the camera and hand tracking run
 
-async function start() {
+// The Start button and Record can both start the camera; only do it once.
+function startTrackingOnce() {
+  tracking ??= startTracking().then((ok) => {
+    if (!ok) tracking = null;
+    return ok;
+  });
+  return tracking;
+}
+
+async function startTracking() {
   els.start.disabled = true;
   els.introError.textContent = '';
   const soundReady = startSound(); // first, while still inside the click
@@ -533,13 +579,14 @@ async function start() {
     els.start.textContent = 'Try Again';
     els.start.disabled = false;
     setStatus('Not started');
-    return;
+    return false;
   }
 
   els.intro.hidden = true;
   els.stage.classList.add('live');
   setStatus(soundTrouble ?? 'Ready — hold up a finger pattern');
   requestAnimationFrame(onFrame);
+  return true;
 }
 
 // ---------- sound ----------
@@ -717,10 +764,20 @@ listenToKeyboard();
 setUpRecordings({
   player,
   startSound,
+  getVideo: videoForRecording,
+  stopVideo: () => (recordingVideo = false),
   button: els.record,
   label: els.recordLabel,
+  micButton: els.mic,
   list: els.takes,
   empty: els.takesEmpty,
+  preview: {
+    dialog: els.preview,
+    video: els.previewVideo,
+    title: els.previewTitle,
+    save: els.previewSave,
+    close: els.previewClose,
+  },
   setStatus,
 });
 for (const side of SIDES) {
@@ -729,7 +786,7 @@ for (const side of SIDES) {
   renderCard(side);
 }
 
-els.start.addEventListener('click', start);
+els.start.addEventListener('click', startTrackingOnce);
 new ResizeObserver(resizeCanvas).observe(els.stage);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopEverything();

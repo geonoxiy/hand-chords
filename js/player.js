@@ -57,17 +57,16 @@ export class ChordPlayer {
     const reverb = new Tone.Reverb({ decay: 2.8, wet: 0.2 });
     const limiter = new Tone.Limiter(-1);
     this.output.chain(reverb, limiter, Tone.getDestination());
-    // Everything you hear can also be recorded (see recordings.js).
-    if (Tone.Recorder.supported) {
-      this.recorder = new Tone.Recorder();
-      limiter.connect(this.recorder);
-      // Chrome stops feeding the recorder while nothing is playing, which
-      // would cut the pauses out of a take. A silent source keeps time flowing.
-      const silence = Tone.getContext().createConstantSource();
-      silence.offset.value = 0;
-      silence.start();
-      Tone.connect(silence, this.recorder);
-    }
+    // Everything you hear also goes to a stream for recordings (see
+    // recordings.js), where the microphone can join it.
+    this.recordingOutput = Tone.getContext().createMediaStreamDestination();
+    limiter.connect(this.recordingOutput);
+    // Chrome stops feeding the stream while nothing is playing, which would
+    // cut the pauses out of a take. A silent source keeps time flowing.
+    const silence = Tone.getContext().createConstantSource();
+    silence.offset.value = 0;
+    silence.start();
+    Tone.connect(silence, this.recordingOutput);
     await reverb.generate();
 
     const transport = Tone.getTransport();
@@ -118,6 +117,14 @@ export class ChordPlayer {
       if (name === 'keys') voice.instrument.triggerAttack(voice.notes.map(toNoteName), now, KEYS_VELOCITY);
       else this.#strike(name, now);
     }
+  }
+
+  // Mixes a microphone into recordings only — never into the speakers, which
+  // would feed back. Returns a function that takes it out again.
+  addToRecording(micStream) {
+    const source = Tone.getContext().createMediaStreamSource(micStream);
+    Tone.connect(source, this.recordingOutput);
+    return () => source.disconnect();
   }
 
   setStyle(style) {

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Hand Chords</title>
+    <meta
+      name="description"
+      content="Play chords with finger patterns in front of your camera — one chord per hand, on piano, guitar, organ or synth."
+    />
+    <script>
+      // Pick the theme before the page draws, so it doesn't flash.
+      (() => {
+        let saved = null;
+        try {
+          saved = localStorage.getItem('hand-chords-theme');
+        } catch {}
+        const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.dataset.theme = saved || (dark ? 'dark' : 'light');
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+    <script type="module" src="js/main.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>Hand Chords</h1>
+        <p class="status" id="status" role="status">Start the camera, or play the keyboard.</p>
+      </div>
+      <div class="top-actions">
+        <button class="record-button" id="record" type="button" aria-pressed="false">
+          <span class="record-dot" aria-hidden="true"></span>
+          <span id="record-label">Record</span>
+        </button>
+        <button class="round-button" id="theme" type="button" aria-label="Switch to dark mode">
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" />
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1Z" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="stage" id="stage" aria-label="Camera">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="intro" id="intro">
+          <h2>Play chords with your hands</h2>
+          <p>Hold up a finger pattern and each hand plays its own chord. Make a fist to stop.</p>
+          <button id="start" class="filled-button" type="button">Start Camera</button>
+          <p class="intro-error" id="intro-error" role="alert"></p>
+          <p class="footnote">Video stays on this device.</p>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="hands" aria-label="Now playing">
+          <article class="card hand-card" data-side="left">
+            <div class="hand-head"><span class="hand-dot"></span>Left hand</div>
+            <div class="hand-body">
+              <div>
+                <div class="chord">—</div>
+                <div class="hand-roman"></div>
+              </div>
+            </div>
+            <p class="hand-notes"></p>
+          </article>
+          <article class="card hand-card" data-side="right">
+            <div class="hand-head"><span class="hand-dot"></span>Right hand</div>
+            <div class="hand-body">
+              <div>
+                <div class="chord">—</div>
+                <div class="hand-roman"></div>
+              </div>
+            </div>
+            <p class="hand-notes"></p>
+          </article>
+        </div>
+        <section class="card sound" aria-labelledby="sound-title">
+          <h2 class="card-title" id="sound-title">Sound</h2>
+          <div class="sound-grid" id="sound-grid"></div>
+        </section>
+      </aside>
+
+      <section class="card keys" aria-label="Keyboard">
+        <div class="keys-scroll">
+          <div class="keyboard" id="keyboard"></div>
+        </div>
+        <p class="footnote">Click or tap the keys to play<span class="typing-hint">, or type the letters on them</span>.</p>
+      </section>
+
+      <section class="patterns" aria-labelledby="patterns-title">
+        <div class="section-head">
+          <h2 class="section-title" id="patterns-title">Finger Patterns</h2>
+          <div class="segmented" id="chord-set" role="radiogroup" aria-label="Chord set"></div>
+        </div>
+        <div class="gesture-list" id="gesture-list"></div>
+        <p class="footnote">Bars show which fingers are up, thumb first. A fist is silence.</p>
+      </section>
+
+      <section class="recordings" aria-labelledby="recordings-title">
+        <h2 class="section-title" id="recordings-title">Recordings</h2>
+        <div class="card list">
+          <ul class="takes" id="takes"></ul>
+          <p class="empty" id="takes-empty">Press Record to capture everything you play.</p>
+        </div>
+      </section>
+
+      <section class="settings" aria-labelledby="settings-title">
+        <h2 class="section-title" id="settings-title">Settings</h2>
+        <div class="card list">
+          <label class="row">
+            <span class="row-label">Key</span>
+            <select id="key"></select>
+          </label>
+          <div class="row">
+            <span class="row-label" id="style-label">Style</span>
+            <div class="segmented" id="style" role="radiogroup" aria-labelledby="style-label"></div>
+          </div>
+          <label class="row" id="tempo-row">
+            <span class="row-label">Tempo</span>
+            <input type="range" id="tempo" min="50" max="160" step="1" />
+            <output class="row-value" id="tempo-value"></output>
+          </label>
+          <label class="row">
+            <span class="row-label">Volume</span>
+            <input type="range" id="volume" min="0" max="100" step="1" />
+          </label>
+          <label class="row">
+            <span class="row-label">Swap left and right hands</span>
+            <input type="checkbox" class="switch" id="swap" role="switch" />
+          </label>
+          <button class="row row-button" id="reset" type="button">Reset Chords</button>
+        </div>
+        <p class="footnote" id="style-help"></p>
+      </section>
+    </main>
+  </body>
+</html>

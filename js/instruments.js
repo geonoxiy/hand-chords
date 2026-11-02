@@ -12,8 +12,9 @@ export const INSTRUMENTS = [
     label: 'Piano',
     samples: {
       baseUrl: SALAMANDER,
-      notes: ['A1', 'C2', 'D#2', 'F#2', 'A2', 'C3', 'D#3', 'F#3', 'A3', 'C4', 'D#4',
-        'F#4', 'A4', 'C5', 'D#5', 'F#5', 'A5', 'C6', 'D#6', 'F#6', 'A6'],
+      notes: ['A0', 'C1', 'D#1', 'F#1', 'A1', 'C2', 'D#2', 'F#2', 'A2', 'C3', 'D#3', 'F#3',
+        'A3', 'C4', 'D#4', 'F#4', 'A4', 'C5', 'D#5', 'F#5', 'A5', 'C6', 'D#6', 'F#6',
+        'A6', 'C7', 'D#7', 'F#7', 'A7', 'C8'],
     },
     holdFrom: 0.35,
     release: 0.6,
@@ -138,7 +139,7 @@ function prepareSamples(def) {
 
 function fetchBuffers({ baseUrl, notes }) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out downloading the sound')), 30000);
+    const timer = setTimeout(() => reject(new Error('Timed out downloading the sound')), 60000);
     const buffers = new Tone.ToneAudioBuffers({
       urls: Object.fromEntries(notes.map((note) => [note, `${note.replace('#', 's')}.mp3`])),
       baseUrl,

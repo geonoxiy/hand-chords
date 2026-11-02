@@ -19,9 +19,22 @@
         document.documentElement.dataset.theme = saved || (dark ? 'dark' : 'light');
       })();
     </script>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=6" />
     <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
-    <script type="module" src="js/main.js"></script>
+    <!-- Version tags make browsers fetch a matching set of files after each
+         update, instead of mixing new and cached ones. Bump with every release. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "./js/hands.js": "./js/hands.js?v=6",
+          "./js/instruments.js": "./js/instruments.js?v=6",
+          "./js/music.js": "./js/music.js?v=6",
+          "./js/player.js": "./js/player.js?v=6",
+          "./js/recordings.js": "./js/recordings.js?v=6"
+        }
+      }
+    </script>
+    <script type="module" src="js/main.js?v=6"></script>
   </head>
   <body>
     <header class="top">
@@ -69,7 +82,14 @@
       <aside class="side">
         <div class="hands" aria-label="Now playing">
           <article class="card hand-card" data-side="left">
-            <div class="hand-head"><span class="hand-dot"></span>Left hand</div>
+            <div class="hand-head">
+              <span class="hand-dot"></span>Left hand
+              <div class="stepper" role="group" aria-label="Left hand octave">
+                <button type="button" data-step="-1" aria-label="Left hand octave down">−</button>
+                <output></output>
+                <button type="button" data-step="1" aria-label="Left hand octave up">+</button>
+              </div>
+            </div>
             <div class="hand-body">
               <div>
                 <div class="chord">—</div>
@@ -79,7 +99,14 @@
             <p class="hand-notes"></p>
           </article>
           <article class="card hand-card" data-side="right">
-            <div class="hand-head"><span class="hand-dot"></span>Right hand</div>
+            <div class="hand-head">
+              <span class="hand-dot"></span>Right hand
+              <div class="stepper" role="group" aria-label="Right hand octave">
+                <button type="button" data-step="-1" aria-label="Right hand octave down">−</button>
+                <output></output>
+                <button type="button" data-step="1" aria-label="Right hand octave up">+</button>
+              </div>
+            </div>
             <div class="hand-body">
               <div>
                 <div class="chord">—</div>
@@ -105,10 +132,15 @@
       <section class="patterns" aria-labelledby="patterns-title">
         <div class="section-head">
           <h2 class="section-title" id="patterns-title">Finger Patterns</h2>
-          <div class="segmented" id="chord-set" role="radiogroup" aria-label="Chord set"></div>
+          <div class="section-controls">
+            <div class="segmented" id="sign-mode" role="radiogroup" aria-label="Hand signs"></div>
+            <div class="segmented" id="solfege-plays" role="radiogroup" aria-label="Solfège signs play"></div>
+            <div class="segmented" id="chord-set" role="radiogroup" aria-label="Chord set"></div>
+          </div>
         </div>
         <div class="gesture-list" id="gesture-list"></div>
-        <p class="footnote">Bars show which fingers are up, thumb first. A fist is silence.</p>
+        <div class="gesture-list" id="sign-list" hidden></div>
+        <p class="footnote" id="patterns-note"></p>
       </section>
 
       <section class="recordings" aria-labelledby="recordings-title">

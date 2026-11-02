@@ -408,6 +408,45 @@ svg {
   background: var(--c);
 }
 
+/* Octave stepper: − Oct 0 + */
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  border-radius: 8px;
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.stepper button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--label);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stepper button:active:not(:disabled) {
+  background: var(--fill-strong);
+}
+
+.stepper button:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+
+.stepper output {
+  min-width: 46px;
+  color: var(--secondary);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .hand-body {
   display: flex;
   align-items: center;
@@ -564,7 +603,7 @@ svg {
 
 .keyboard {
   position: relative;
-  min-width: 720px;
+  min-width: 960px;
   height: 120px;
   touch-action: pan-x; /* taps play; a horizontal swipe scrolls on phones */
   user-select: none;
@@ -660,6 +699,22 @@ svg {
 
 .section-head .section-title {
   margin-bottom: 0;
+}
+
+.section-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gesture-list[hidden],
+.segmented[hidden] {
+  display: none;
+}
+
+.sign-result {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .gesture-list {

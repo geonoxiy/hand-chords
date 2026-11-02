@@ -3,25 +3,41 @@ import { INSTRUMENTS } from './instruments.js';
 import {
   CHORD_SETS,
   GESTURES,
+  KEY_MODES,
   NOTE_NAMES,
   QUALITIES,
+  SIGNS,
   chordName,
   defaultChart,
+  keyName,
   noteLabel,
   romanNumeral,
+  signChord,
+  signNote,
+  spell,
   voiceChord,
+  voiceNote,
 } from './music.js';
 import { ChordPlayer } from './player.js';
 import { setUpRecordings } from './recordings.js';
 
 const SIDES = ['left', 'right'];
 const FIST = '00000';
-const SWITCH_MS = 120; // a new pattern must be held this long before its chord plays
-const STOP_MS = 220; // a fist / missing hand must last this long before the chord stops
-const KEYBOARD_LOW = 36; // C2
-const KEYBOARD_HIGH = 96; // C7
+const SWITCH_MS = 120; // a new shape must be held this long before it plays
+const STOP_MS = 220; // a fist / missing hand must last this long before it stops
+const KEYBOARD_LOW = 21; // A0 — a full 88-key piano
+const KEYBOARD_HIGH = 108; // C8
+const OCTAVE_LIMITS = { left: [-1, 2], right: [-2, 2] };
 const STORAGE_KEY = 'hand-chords-settings';
 const THEME_KEY = 'hand-chords-theme';
+const SIGN_MODES = [
+  { id: 'patterns', label: 'Patterns' },
+  { id: 'solfege', label: 'Solfège' },
+];
+const SOLFEGE_PLAYS = [
+  { id: 'chords', label: 'Chords' },
+  { id: 'notes', label: 'Notes' },
+];
 const STYLES = [
   { id: 'hold', label: 'Hold', help: 'Hold strikes the chord once and keeps it at a steady volume while your hand is up.' },
   { id: 'pulse', label: 'Pulse', help: 'Pulse strikes the chord on every beat.' },
@@ -52,8 +68,13 @@ const els = {
   introError: $('#intro-error'),
   soundGrid: $('#sound-grid'),
   keyboard: $('#keyboard'),
+  patternsTitle: $('#patterns-title'),
+  patternsNote: $('#patterns-note'),
+  signMode: $('#sign-mode'),
+  solfegePlays: $('#solfege-plays'),
   chordSet: $('#chord-set'),
   gestureList: $('#gesture-list'),
+  signList: $('#sign-list'),
   takes: $('#takes'),
   takesEmpty: $('#takes-empty'),
   key: $('#key'),
@@ -79,8 +100,9 @@ const hands = Object.fromEntries(
     {
       reader: new FingerReader(),
       stabilizer: new Stabilizer(),
-      pattern: null, // what the camera sees right now (null = no hand)
-      playing: null, // pattern whose chord is sounding
+      pattern: null, // fingers the camera sees right now (null = no hand)
+      token: null, // what that shape is: a finger pattern, or a solfège sign id
+      playing: null, // the token whose sound is playing
       card: document.querySelector(`.hand-card[data-side="${side}"]`),
       rendered: '',
     },
@@ -95,25 +117,33 @@ let lastVideoTime = -1;
 function loadSettings() {
   const defaults = {
     key: 0,
+    mode: 'major',
     chordSet: 'triads',
+    signs: 'patterns',
+    solfegePlays: 'chords',
+    octaves: { left: 0, right: 0 },
     style: 'hold',
     tempo: 90,
     volume: 0.8,
     swap: false,
     sound: 'piano',
-    chart: defaultChart(0),
   };
+  let saved = null;
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    const loaded = { ...defaults, ...saved, chart: { ...defaults.chart, ...saved?.chart } };
-    if (!INSTRUMENTS.some((instrument) => instrument.id === loaded.sound)) loaded.sound = defaults.sound;
-    for (const [pattern, chord] of Object.entries(loaded.chart)) {
-      if (!QUALITIES[chord?.quality]) loaded.chart[pattern] = defaults.chart[pattern];
-    }
-    return loaded;
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
   } catch {
-    return defaults;
+    // Storage unavailable or unreadable: start fresh.
   }
+  const loaded = { ...defaults, ...saved, octaves: { ...defaults.octaves, ...saved?.octaves } };
+  if (!KEY_MODES[loaded.mode]) loaded.mode = defaults.mode;
+  if (!INSTRUMENTS.some((instrument) => instrument.id === loaded.sound)) loaded.sound = defaults.sound;
+  // Patterns added since the chart was saved get this key's chords.
+  const fresh = defaultChart(loaded.key, loaded.chordSet, loaded.mode);
+  loaded.chart = { ...fresh, ...saved?.chart };
+  for (const [pattern, chord] of Object.entries(loaded.chart)) {
+    if (!QUALITIES[chord?.quality]) loaded.chart[pattern] = fresh[pattern];
+  }
+  return loaded;
 }
 
 function saveSettings() {
@@ -122,6 +152,37 @@ function saveSettings() {
   } catch {
     // Storage unavailable (private window etc.) — settings just won't persist.
   }
+}
+
+// ---------- what a hand plays ----------
+
+const solfege = () => settings.signs === 'solfege';
+const signById = (id) => SIGNS.find((sign) => sign.id === id);
+const playable = (token) => Boolean(token && (solfege() ? signById(token) : settings.chart[token]));
+
+// The sound for a recognised shape: its name, a detail line, and the notes.
+function soundFor(token, side) {
+  const { key, mode } = settings;
+  const octave = settings.octaves[side];
+  if (solfege()) {
+    const sign = signById(token);
+    if (settings.solfegePlays === 'notes') {
+      const pitch = signNote(sign, key, mode);
+      return { name: spell(pitch, key, mode), detail: sign.name, notes: voiceNote(pitch, side, octave) };
+    }
+    const chord = signChord(sign, key, mode, settings.chordSet);
+    return {
+      name: chordName(chord, key, mode),
+      detail: `${sign.name} · ${romanNumeral(chord, key, mode)}`,
+      notes: voiceChord(chord, side, octave),
+    };
+  }
+  const chord = settings.chart[token];
+  return {
+    name: chordName(chord, key, mode),
+    detail: romanNumeral(chord, key, mode),
+    notes: voiceChord(chord, side, octave),
+  };
 }
 
 // ---------- light / dark ----------
@@ -203,7 +264,7 @@ function buildGestureList() {
   for (const gesture of GESTURES) {
     const row = document.createElement('div');
     row.className = 'gesture';
-    row.dataset.pattern = gesture.pattern;
+    row.dataset.token = gesture.pattern;
     row.innerHTML = `
       <div class="gesture-name"><strong>${gesture.name}</strong><small>${gesture.hint}</small></div>
       <span class="roman"></span>
@@ -224,11 +285,26 @@ function buildGestureList() {
 
   const fist = document.createElement('div');
   fist.className = 'gesture fist';
+  fist.dataset.token = FIST;
   fist.innerHTML = `
     <div class="gesture-name"><strong>Fist</strong><small>All fingers down</small></div>
     <p class="gesture-chord">Silence — stops that hand's chord</p>`;
   fist.prepend(fingerGlyph(FIST));
   els.gestureList.append(fist);
+}
+
+function buildSignList() {
+  for (const sign of SIGNS) {
+    const row = document.createElement('div');
+    row.className = 'gesture';
+    row.dataset.token = sign.id;
+    row.innerHTML = `
+      <div class="gesture-name"><strong>${sign.name}</strong><small>${sign.hint}</small></div>
+      <span class="roman"></span>
+      <p class="gesture-chord sign-result"></p>`;
+    row.prepend(fingerGlyph(sign.glyph));
+    els.signList.append(row);
+  }
 }
 
 function buildKeyboard() {
@@ -257,6 +333,12 @@ function buildKeyboard() {
     keyEls.set(midi, key);
     els.keyboard.append(key);
   }
+
+  // On narrow screens the keyboard scrolls; start with middle C in view.
+  requestAnimationFrame(() => {
+    const scroller = els.keyboard.parentElement;
+    scroller.scrollLeft = keyEls.get(60).offsetLeft - scroller.clientWidth / 2;
+  });
 }
 
 // Sliders show their filled part in the accent colour.
@@ -265,20 +347,88 @@ function fillRange(input) {
   input.style.setProperty('--fill', `${fraction * 100}%`);
 }
 
+function showOctave(side) {
+  const octave = settings.octaves[side];
+  const stepper = hands[side].card.querySelector('.stepper');
+  stepper.querySelector('output').textContent = `Oct ${octave > 0 ? '+' : ''}${octave}`;
+  const [low, high] = OCTAVE_LIMITS[side];
+  stepper.querySelector('[data-step="-1"]').disabled = octave <= low;
+  stepper.querySelector('[data-step="1"]').disabled = octave >= high;
+}
+
+function buildOctaveSteppers() {
+  for (const side of SIDES) {
+    const stepper = hands[side].card.querySelector('.stepper');
+    stepper.addEventListener('click', (event) => {
+      const step = Number(event.target.closest('button')?.dataset.step);
+      if (!step) return;
+      const [low, high] = OCTAVE_LIMITS[side];
+      settings.octaves[side] = Math.min(high, Math.max(low, settings.octaves[side] + step));
+      showOctave(side);
+      saveSettings();
+      replayHands();
+    });
+    showOctave(side);
+  }
+}
+
+// Patterns or solfège: which list, title and controls to show.
+function showSignMode() {
+  const signs = solfege();
+  els.patternsTitle.textContent = signs ? 'Solfège Signs' : 'Finger Patterns';
+  els.gestureList.hidden = signs;
+  els.signList.hidden = !signs;
+  els.solfegePlays.hidden = !signs;
+  els.chordSet.hidden = signs && settings.solfegePlays === 'notes';
+  els.patternsNote.textContent = signs
+    ? 'Curwen hand signs, as used in Kodály lessons. Lower your hand out of view to stop.'
+    : 'Bars show which fingers are up, thumb first. A fist is silence.';
+}
+
 function buildSettings() {
-  els.key.innerHTML = NOTE_NAMES.map((name, i) => `<option value="${i}">${name} major</option>`).join('');
-  els.key.value = settings.key;
+  els.key.innerHTML = Object.keys(KEY_MODES)
+    .map((mode) => {
+      const options = NOTE_NAMES.map((_, key) => `<option value="${key}:${mode}">${keyName(key, mode)}</option>`).join('');
+      return `<optgroup label="${mode === 'major' ? 'Major' : 'Minor'} keys">${options}</optgroup>`;
+    })
+    .join('');
+  els.key.value = `${settings.key}:${settings.mode}`;
   els.key.addEventListener('change', () => {
-    // Move every chord to the new key, keeping any custom choices.
-    const shift = Number(els.key.value) - settings.key;
-    settings.key = Number(els.key.value);
-    for (const chord of Object.values(settings.chart)) chord.root = (chord.root + shift + 12) % 12;
+    const [key, mode] = els.key.value.split(':');
+    if (mode !== settings.mode) {
+      // A different kind of key needs its own chords.
+      settings.mode = mode;
+      settings.key = Number(key);
+      settings.chart = defaultChart(settings.key, settings.chordSet, mode);
+    } else {
+      // Same kind of key: move every chord along, keeping any custom choices.
+      const shift = Number(key) - settings.key;
+      settings.key = Number(key);
+      for (const chord of Object.values(settings.chart)) chord.root = (chord.root + shift + 12) % 12;
+    }
+    chartChanged();
+  });
+
+  segmented(els.signMode, 'sign-mode', SIGN_MODES, settings.signs, (mode) => {
+    settings.signs = mode;
+    showSignMode();
+    saveSettings();
+    for (const side of SIDES) {
+      hands[side].reader.reset(); // forget the last sign, so the new mode starts clean
+      hands[side].stabilizer.reset();
+    }
+    replayHands();
+  });
+
+  segmented(els.solfegePlays, 'solfege-plays', SOLFEGE_PLAYS, settings.solfegePlays, (plays) => {
+    settings.solfegePlays = plays;
+    showSignMode();
     chartChanged();
   });
 
   segmented(els.chordSet, 'chord-set', CHORD_SETS, settings.chordSet, (set) => {
     settings.chordSet = set;
-    settings.chart = defaultChart(settings.key, set);
+    settings.chart = defaultChart(settings.key, set, settings.mode);
     chartChanged();
   });
 
@@ -323,28 +473,44 @@ function buildSettings() {
   });
 
   els.reset.addEventListener('click', () => {
-    settings.chart = defaultChart(settings.key, settings.chordSet);
+    settings.chart = defaultChart(settings.key, settings.chordSet, settings.mode);
     chartChanged();
   });
+
+  showSignMode();
 }
 
 // ---------- rendering ----------
 
 function refreshChart() {
-  for (const row of els.gestureList.querySelectorAll('.gesture[data-pattern]')) {
-    const chord = settings.chart[row.dataset.pattern];
-    row.querySelector('.root').value = chord.root;
+  const { key, mode } = settings;
+  for (const row of els.gestureList.querySelectorAll('.gesture:not(.fist)')) {
+    const chord = settings.chart[row.dataset.token];
+    const root = row.querySelector('.root');
+    for (const option of root.options) option.textContent = spell(Number(option.value), key, mode);
+    root.value = chord.root;
     row.querySelector('.quality').value = chord.quality;
-    row.querySelector('.roman').textContent = romanNumeral(chord, settings.key);
+    row.querySelector('.roman').textContent = romanNumeral(chord, key, mode);
+  }
+  for (const row of els.signList.querySelectorAll('.gesture')) {
+    const sign = signById(row.dataset.token);
+    if (settings.solfegePlays === 'notes') {
+      row.querySelector('.sign-result').textContent = spell(signNote(sign, key, mode), key, mode);
+      row.querySelector('.roman').textContent = '';
+    } else {
+      const chord = signChord(sign, key, mode, settings.chordSet);
+      row.querySelector('.sign-result').textContent = chordName(chord, key, mode);
+      row.querySelector('.roman').textContent = romanNumeral(chord, key, mode);
+    }
   }
 }
 
 function refreshHighlights() {
-  for (const row of els.gestureList.querySelectorAll('.gesture')) {
-    const pattern = row.dataset.pattern ?? FIST;
+  for (const row of document.querySelectorAll('.gesture-list .gesture')) {
+    const { token } = row.dataset;
     for (const side of SIDES) {
       const hand = hands[side];
-      const active = pattern === FIST ? hand.pattern === FIST && !hand.playing : hand.playing === pattern;
+      const active = token === FIST ? hand.pattern === FIST && !hand.playing && !solfege() : hand.playing === token;
       row.classList.toggle(`on-${side}`, active);
     }
   }
@@ -353,27 +519,28 @@ function refreshHighlights() {
   for (const side of SIDES) {
     const { playing } = hands[side];
     if (!playing) continue;
-    for (const midi of voiceChord(settings.chart[playing], side)) keyEls.get(midi)?.classList.add(side);
+    for (const midi of soundFor(playing, side).notes) keyEls.get(midi)?.classList.add(side);
   }
 }
 
 function renderCard(side) {
   const hand = hands[side];
-  const signature = `${hand.pattern}|${hand.playing}|${settings.key}|${JSON.stringify(settings.chart[hand.playing])}`;
+  const sound = hand.playing && soundFor(hand.playing, side);
+  const signature = JSON.stringify([hand.pattern, hand.token, hand.playing, sound]);
   if (signature === hand.rendered) return;
   hand.rendered = signature;
 
   const { card } = hand;
-  const chord = hand.playing && settings.chart[hand.playing];
-  card.classList.toggle('playing', Boolean(chord));
-  card.querySelector('.chord').textContent = chord ? chordName(chord) : '—';
-  card.querySelector('.hand-roman').textContent = chord ? romanNumeral(chord, settings.key) : '';
+  card.classList.toggle('playing', Boolean(sound));
+  card.querySelector('.chord').textContent = sound ? sound.name : '—';
+  card.querySelector('.hand-roman').textContent = sound ? sound.detail : '';
 
   let note;
-  if (chord) note = voiceChord(chord, side).map(noteLabel).join(' ');
+  if (sound) note = sound.notes.map((midi) => noteLabel(midi, settings.key, settings.mode)).join(' ');
   else if (hand.pattern === null) note = `Show your ${side} hand`;
+  else if (playable(hand.token)) note = 'Hold it…';
+  else if (solfege()) note = 'Not a solfège sign';
   else if (hand.pattern === FIST) note = 'Fist — silent';
-  else if (settings.chart[hand.pattern]) note = 'Hold it…';
   else note = 'Not in the chart';
   card.querySelector('.hand-notes').textContent = note;
 }
@@ -405,10 +572,11 @@ function drawOverlay(found) {
       ctx.fill();
     }
 
-    // Chord name tag above the hand.
+    // Name tag above the hand.
     const hand = hands[side];
-    const chord = hand.playing && settings.chart[hand.playing];
-    const label = chord ? chordName(chord) : hand.pattern === FIST ? 'Silent' : '…';
+    const sound = hand.playing && soundFor(hand.playing, side);
+    const sign = solfege() && hand.playing ? `${signById(hand.playing).name} · ` : '';
+    const label = sound ? sign + sound.name : hand.pattern === FIST && !solfege() ? 'Silent' : '…';
     const top = Math.min(...points.map((p) => p.y));
     const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
     ctx.font = `600 ${17 * dpr}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`;
@@ -416,7 +584,7 @@ function drawOverlay(found) {
     const tagWidth = ctx.measureText(label).width + 26 * dpr;
     const tagX = Math.min(Math.max(centerX - tagWidth / 2, 4), width - tagWidth - 4);
     const tagY = Math.max(top - tagHeight - 12 * dpr, 4);
-    ctx.fillStyle = chord ? color : 'rgba(0, 0, 0, 0.55)';
+    ctx.fillStyle = sound ? color : 'rgba(0, 0, 0, 0.55)';
     ctx.beginPath();
     ctx.roundRect(tagX, tagY, tagWidth, tagHeight, tagHeight / 2);
     ctx.fill();
@@ -427,30 +595,36 @@ function drawOverlay(found) {
   }
 }
 
-// ---------- hand → chord ----------
+// ---------- hand → sound ----------
 
-function updateHand(side, pattern, now) {
+function updateHand(side, pattern, token, now) {
   const hand = hands[side];
   hand.pattern = pattern;
-  const wanted = pattern && settings.chart[pattern] ? pattern : null;
+  hand.token = token;
+  const wanted = playable(token) ? token : null;
   const playing = hand.stabilizer.push(wanted, now, wanted ? SWITCH_MS : STOP_MS);
   if (playing !== hand.playing) {
     hand.playing = playing;
-    player.setChord(side, playing && voiceChord(settings.chart[playing], side));
+    player.setChord(side, playing && soundFor(playing, side).notes);
   }
   renderCard(side);
 }
 
-// The chart or key changed: replay any held chords with their new notes.
-function chartChanged() {
-  saveSettings();
-  refreshChart();
+// Something changed what the hands' shapes play: replay with the new notes.
+function replayHands() {
   for (const side of SIDES) {
-    const { playing } = hands[side];
-    if (playing) player.setChord(side, voiceChord(settings.chart[playing], side));
+    const hand = hands[side];
+    if (hand.playing && !playable(hand.playing)) hand.playing = null;
+    player.setChord(side, hand.playing && soundFor(hand.playing, side).notes);
     renderCard(side);
   }
   refreshHighlights();
+}
+
+function chartChanged() {
+  saveSettings();
+  refreshChart();
+  replayHands();
 }
 
 function stopEverything() {
@@ -459,6 +633,7 @@ function stopEverything() {
     hands[side].reader.reset();
     hands[side].playing = null;
     hands[side].pattern = null;
+    hands[side].token = null;
     renderCard(side);
     setGlyph(hands[side].glyph, null);
   }
@@ -479,10 +654,12 @@ function onFrame() {
       const hand = hands[side];
       const seen = found.find((h) => h.side === side);
       if (seen) {
-        updateHand(side, hand.reader.read(seen.world), now);
+        const pattern = hand.reader.read(seen.world);
+        const token = solfege() ? hand.reader.sign(seen.world, seen.label) : pattern;
+        updateHand(side, pattern, token, now);
       } else {
         hand.reader.reset();
-        updateHand(side, null, now);
+        updateHand(side, null, null, now);
       }
       setGlyph(hand.glyph, hand.pattern, hand.reader.scores);
     }
@@ -584,7 +761,7 @@ async function startTracking() {
 
   els.intro.hidden = true;
   els.stage.classList.add('live');
-  setStatus(soundTrouble ?? 'Ready — hold up a finger pattern');
+  setStatus(soundTrouble ?? `Ready — show a ${solfege() ? 'solfège sign' : 'finger pattern'}`);
   requestAnimationFrame(onFrame);
   return true;
 }
@@ -756,9 +933,11 @@ player.onStrike = (side) => {
 
 setUpTheme();
 buildGestureList();
+buildSignList();
 buildKeyboard();
 buildSoundPicker();
 buildSettings();
+buildOctaveSteppers();
 refreshChart();
 listenToKeyboard();
 setUpRecordings({

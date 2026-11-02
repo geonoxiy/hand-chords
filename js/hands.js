@@ -46,8 +46,20 @@ const SMOOTHING = 0.5; // how far each frame moves a score towards its new readi
 
 const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
 const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
 const length = (v) => Math.hypot(v.x, v.y, v.z);
 const distance = (a, b) => length(sub(a, b));
+const unit = (v) => {
+  const l = length(v) || 1;
+  return { x: v.x / l, y: v.y / l, z: v.z / l };
+};
+const mix = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
+const average = (points, indices) => {
+  const sum = indices.reduce((s, i) => ({ x: s.x + points[i].x, y: s.y + points[i].y, z: s.z + points[i].z }), { x: 0, y: 0, z: 0 });
+  return { x: sum.x / indices.length, y: sum.y / indices.length, z: sum.z / indices.length };
+};
+const KNUCKLES = [5, 9, 13, 17];
+const FINGERTIPS = [8, 12, 16, 20];
 
 // 0 at `zeroAt`, 1 at `oneAt`, straight line in between.
 const ramp = (value, zeroAt, oneAt) => Math.min(1, Math.max(0, (value - zeroAt) / (oneAt - zeroAt)));
@@ -90,6 +102,8 @@ export class FingerReader {
   reset() {
     this.scores = null;
     this.up = [false, false, false, false, false];
+    this.directions = {};
+    this.lastSign = null;
   }
 
   // `world` is MediaPipe's worldLandmarks for the hand (metric 3D, so the
@@ -99,6 +113,42 @@ export class FingerReader {
     this.scores = this.scores ? this.scores.map((score, i) => score + SMOOTHING * (fresh[i] - score)) : fresh;
     this.up = this.up.map((wasUp, i) => (wasUp ? this.scores[i] > DOWN_BELOW : this.scores[i] > UP_ABOVE));
     return this.up.map(Number).join('');
+  }
+
+  // Which solfège (Curwen) hand sign this is — 'do' … 'ti' — or null. Call
+  // after read(): it uses the finger states plus which way the hand points
+  // and faces. `label` is MediaPipe's 'Left' / 'Right', which tells which
+  // side of the hand is the palm. Coordinates: y points down, z away.
+  sign(world, label) {
+    const fingers = this.up.slice(1).map(Number).join('');
+    const pointing = this.#smoothed('pointing', unit(sub(average(world, FINGERTIPS), average(world, KNUCKLES))));
+    const across = cross(sub(world[5], world[0]), sub(world[17], world[0]));
+    const palm = this.#smoothed('palm', unit(label === 'Right' ? across : { x: -across.x, y: -across.y, z: -across.z }));
+    const thumb = this.#smoothed('thumb', unit(sub(world[4], world[2])));
+    const elevation = (Math.asin(-pointing.y) * 180) / Math.PI; // fingers: +90 up, −90 down
+
+    // Thresholds lean towards the sign already showing, so a hand near a
+    // boundary doesn't flicker between two signs.
+    const was = this.lastSign;
+    const level = was === 'mi' || was === 'sol';
+    let sign = null;
+    if (fingers === '0000') {
+      sign = this.up[0] && thumb.y > (was === 'fa' ? 0.3 : 0.5) ? 'fa' : 'do';
+    } else if (fingers === '1000') {
+      sign = 'ti';
+    } else if (fingers === '1111' && elevation < 60) {
+      if (elevation > (was === 're' ? 12 : level ? 28 : 20)) sign = 're';
+      else if (elevation < (was === 'la' ? -12 : level ? -28 : -20)) sign = 'la';
+      else sign = palm.y > (was === 'mi' ? 0.3 : was === 'sol' ? 0.6 : 0.45) ? 'mi' : 'sol';
+    }
+    this.lastSign = sign;
+    return sign;
+  }
+
+  #smoothed(name, vector) {
+    const previous = this.directions[name];
+    this.directions[name] = previous ? unit(mix(previous, vector, SMOOTHING)) : vector;
+    return this.directions[name];
   }
 }
 
@@ -152,6 +202,7 @@ export class HandSides {
     const hands = result.landmarks.map((landmarks, i) => ({
       landmarks,
       world: result.worldLandmarks[i],
+      label: result.handedness[i][0].categoryName, // which hand it looks like, for palm direction
       side: result.handedness[i][0].categoryName === 'Left' ? 'left' : 'right',
     }));
     const away = (hand, side) =>
